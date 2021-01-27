@@ -1,6 +1,9 @@
-package Elee
+package elee
 
-import "net/http"
+import (
+	"fmt"
+	"net/http"
+)
 
 type Context interface{
 	// Request returns `*http.Request`.
@@ -21,15 +24,19 @@ type Context interface{
 	// SetPath sets the registered path for the handler.
 	SetPath(p string)
 
-	// Handler returns the matched handler by router.
-	Handler() HandlerFunc
+	Method() string
 
-	// SetHandler sets the matched handler by router.
-	SetHandler(h HandlerFunc)
+	Header(key string)
+
+	SetHeader(key string,value string)
+
+	SetStatus(code int)
+
+	String(code int, format string,values ...interface{})
 
 }
 
-type HandlerFunc func(c *Context)error
+type HandlerFunc func(c Context)error
 
 
 type context struct{
@@ -39,6 +46,40 @@ type context struct{
 	method string
 }
 
+func newContext(w http.ResponseWriter,req *http.Request) Context {
+	res := &Response{}
+	res.Writer = w
+	cnt := &context{}
+	cnt.request = req
+	cnt.response = res
+	cnt.path = req.URL.Path
+	cnt.method = req.Method
+	return cnt
+}
+
+
+func (cnt *context) String(code int, format string,values ...interface{}){
+	cnt.SetHeader("Content-Type","text/plain")
+	cnt.SetStatus(code)
+	cnt.response.Writer.Write([]byte(fmt.Sprintf(format,values)))
+}
+
+func (cnt *context) SetStatus(code int){
+	cnt.response.Writer.WriteHeader(code)
+}
+
+func (cnt *context)Header(key string){
+	cnt.response.Writer.Header().Get(key)
+}
+
+func (cnt *context)SetHeader(key string,value string){
+	cnt.response.Writer.Header().Set(key,value)
+}
+
+
+func (cnt *context) Method() string{
+	return cnt.method
+}
 
 
 func(cnt *context) Request() *http.Request{
@@ -63,10 +104,4 @@ func (cnt *context) Path() string{
 
 func (cnt *context) SetPath(path string) {
 	cnt.path = path
-}
-func (cnt *context) Handler() HandlerFunc{
-	return cnt.handler
-}
-func (cnt *context) SetHandler(h HandlerFunc){
-	cnt.handler = h
 }

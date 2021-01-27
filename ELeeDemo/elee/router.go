@@ -1,7 +1,7 @@
-package Elee
+package elee
 
 import (
-	"github.com/labstack/gommon/log"
+	"fmt"
 	"net/http"
 )
 
@@ -40,7 +40,33 @@ func (mh *methodHandler) addHandler (method string, h HandlerFunc){
 	case http.MethodTrace:
 		mh.trace = h
 	default:
-		log.Error("error method:",method)
+		fmt.Println("error method:",method)
 	}
+}
+
+func (mh *methodHandler) findHandler (method string) HandlerFunc{
+	switch method {
+	case http.MethodConnect:
+		return mh.connect
+	case http.MethodDelete:
+		return mh.delete
+	case http.MethodGet:
+		return mh.get
+	case http.MethodHead:
+		return mh.head
+	case http.MethodOptions:
+		return mh.options
+	case http.MethodPatch:
+		return mh.patch
+	case http.MethodPost:
+		return mh.post
+	case http.MethodPut:
+		return mh.put
+	case http.MethodTrace:
+		return mh.trace
+	default:
+		return nil
+	}
+
 }
 
