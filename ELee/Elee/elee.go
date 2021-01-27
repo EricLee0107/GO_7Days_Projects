@@ -2,25 +2,38 @@ package Elee
 
 import (
 	"fmt"
+	"github.com/labstack/echo/v4"
+	"net"
 	"net/http"
+	"sync"
 )
 
 
 
 type Elee struct{
-	routers map[string] http.HandlerFunc
+	// 静态路由
+	routers map[string] *methodHandler
 }
+
 
 func New() *Elee{
 	elee := &Elee{
-		routers: make(map[string] http.HandlerFunc),
+		routers: make(map[string] *methodHandler),
 	}
 	return elee
 }
 
-func (elee *Elee) AddRouter(path string, handler http.HandlerFunc){
-	elee.routers[path] = handler
+func (elee *Elee) AddRouter(method, path string, handler http.HandlerFunc){
+	meth,ok := elee.routers[path]
+	if !ok{
+		meth = &methodHandler{}
+		elee.routers[path] = meth
+	}
+
 }
+
+func ()
+
 
 
 
