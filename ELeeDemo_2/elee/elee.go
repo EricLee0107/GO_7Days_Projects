@@ -9,6 +9,8 @@ import (
 type Elee struct{
 	// 静态路由
 	routers map[string] *methodHandler
+	tree *node
+	maxParam *int
 }
 
 
