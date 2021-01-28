@@ -8,8 +8,8 @@ import (
 
 func main() {
 	el := elee.New()
-	el.AddRouter(http.MethodGet,"/",indexHandler)
-	el.AddRouter(http.MethodPost,"/",indexHandlerPost)
+	el.GET("/",indexHandler)
+	el.POST("/",indexHandlerPost)
 	http.ListenAndServe("localhost:8888",el)
 }
 
