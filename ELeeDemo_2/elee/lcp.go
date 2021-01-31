@@ -1,5 +1,10 @@
 package elee
 
+import (
+	"fmt"
+	"net/http"
+	"strings"
+)
 
 type children []*node
 
@@ -7,13 +12,35 @@ type node struct{
 	kind uint8 // 路由类型 0 静态路由 1 带参数路由 2 全匹配路由
 	label byte // prefix 的第一个字符，根据label和kind来查询子节点
 	parent *node	// 父节点
-	staticChildrens children // 自己点列表
+	staticChildrens children // 子节点列表
 	methodHandler *methodHandler // 对应的handler
 	pnames          []string // 路径参数（只有当kind为1或者2是才有）
 	prefix string // 前缀
 	ppath string
 	elee *Elee
+	paramChildren   *node
+	anyChildren     *node
+
 }
+
+
+
+
+var (
+	methods = [...]string{
+		http.MethodConnect,
+		http.MethodDelete,
+		http.MethodGet,
+		http.MethodHead,
+		http.MethodOptions,
+		http.MethodPatch,
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodTrace,
+	}
+)
+
+
 
 const (
 	skind uint8 = iota
@@ -22,6 +49,12 @@ const (
 )
 
 
+
+// /index/test
+// /index/user
+// /index/user/elee
+// /index/:test
+// /index/*
 
 // Add方法为路由器添加一个新的路径和对应的handler
 func (n *node) Add(method, path string, h HandlerFunc) {
@@ -69,14 +102,14 @@ func (n *node) Add(method, path string, h HandlerFunc) {
 }
 
 // 核心函数，构建字典树
-func (n *node) insert(method, path string, h HandlerFunc, t uint8, ppath string, pnames []string) {
+// 核心函数，构建字典树
+func (cn *node) insert(method, path string, h HandlerFunc, t uint8, ppath string, pnames []string) {
 	// 调整最大参数
 	l := len(pnames)
-	if *n.elee.maxParam < l {
-		*n.elee.maxParam = l
+	if *cn.elee.maxParam < l {
+		*cn.elee.maxParam = l
 	}
 
-	cn := n.elee.tree // 当前节点root
 	if cn == nil {
 		panic("echo: invalid method")
 	}
@@ -116,6 +149,12 @@ func (n *node) insert(method, path string, h HandlerFunc, t uint8, ppath string,
 			for _, child := range cn.staticChildrens {
 				child.parent = n
 			}
+			if cn.paramChildren != nil {
+				cn.paramChildren.parent = n
+			}
+			if cn.anyChildren != nil {
+				cn.anyChildren.parent = n
+			}
 
 			// Reset parent node
 			cn.kind = skind
@@ -126,6 +165,8 @@ func (n *node) insert(method, path string, h HandlerFunc, t uint8, ppath string,
 			cn.methodHandler = new(methodHandler)
 			cn.ppath = ""
 			cn.pnames = nil
+			cn.paramChildren = nil
+			cn.anyChildren = nil
 
 			// 将新创建的prefix为new的节点加到当前节点的子节点中
 			cn.addStaticChild(n)
@@ -166,7 +207,7 @@ func (n *node) insert(method, path string, h HandlerFunc, t uint8, ppath string,
 		} else {
 			// 节点已经存在
 			if h != nil {
-				cn.addHandler(method, h)
+				cn.methodHandler.addHandler(method, h)
 				cn.ppath = ppath
 				if len(cn.pnames) == 0 { // Issue #729
 					cn.pnames = pnames
@@ -176,6 +217,7 @@ func (n *node) insert(method, path string, h HandlerFunc, t uint8, ppath string,
 		return
 	}
 }
+
 
 
 
@@ -189,7 +231,244 @@ func newNode(t uint8, pre string, p *node, sc children, mh *methodHandler, ppath
 		ppath:           ppath,
 		pnames:          pnames,
 		methodHandler:   mh,
+		paramChildren:   paramChildren,
+		anyChildren:     anyChildren,
 	}
 }
 
+
+func (n *node) addStaticChild(c *node) {
+	n.staticChildrens = append(n.staticChildrens, c)
+}
+func (n *node) findChild(l byte) *node {
+	for _, c := range n.staticChildrens {
+		if c.label == l {
+			return c
+		}
+	}
+	return nil
+}
+
+func (n *node) findChildWithLabel(l byte) *node {
+	for _, c := range n.staticChildrens {
+		if c.label == l {
+			return c
+		}
+	}
+	if l == byte(':') {
+		return n.paramChildren
+	}
+	if l == byte('*') {
+		return n.anyChildren
+	}
+	return nil
+}
+
+func (n *node) findStaticChild(l byte) *node {
+	for _, c := range n.staticChildrens {
+		if c.label == l {
+			return c
+		}
+	}
+	return nil
+}
+
+
+func (n *node) checkMethodNotAllowed() HandlerFunc {
+	for _, m := range methods {
+		if h := n.methodHandler.findHandler(m); h != nil {
+			return func(c Context) error {
+		return fmt.Errorf("error1:%d",404)
+	}
+		}
+	}
+	return func(c Context) error {
+		return fmt.Errorf("error2:%d",404)
+	}
+}
+
+
+// 通过method和path查找住的的handler，解析URL参数并把参数放入context
+func (cn *node) Find(method, path string, c Context) {
+	ctx := c.(*context)
+	ctx.path = path
+
+	var (
+		search  = path
+		child   *node         // 子节点
+		n       int           // 参数计数器
+		nk      uint8         // 下一个节点的kind
+		nn      *node         // 下一个节点
+		ns      string        // 下一个search字串
+		pvalues = ctx.pvalues // Use the internal slice so the interface can keep the illusion of a dynamic slice
+	)
+
+	// 搜索顺序 static > param > any
+	for {
+		if search == "" {
+			break
+		}
+
+		pl := 0 // Prefix length
+		l := 0  // LCP length
+
+		if cn.label != ':' {
+			sl := len(search)
+			pl = len(cn.prefix)
+
+			// LCP
+			max := pl
+			if sl < max {
+				max = sl
+			}
+			// 找到共同前缀的起始点
+			for ; l < max && search[l] == cn.prefix[l]; l++ {
+			}
+		}
+
+		if l == pl {
+			// 重合，继续搜索
+			search = search[l:]
+			// Finish routing if no remaining search and we are on an leaf node
+			if search == "" && (nn == nil || cn.parent == nil || cn.ppath != "") {
+				break
+			}
+			// Handle special case of trailing slash route with existing any route (see #1526)
+			if search == "" && path[len(path)-1] == '/' && cn.anyChildren != nil {
+				goto Any
+			}
+		}
+
+		// Attempt to go back up the tree on no matching prefix or no remaining search
+		if l != pl || search == "" {
+			if nn == nil { // Issue #1348
+				return // Not found
+			}
+			cn = nn
+			search = ns
+			if nk == pkind {
+				goto Param
+			} else if nk == akind {
+				goto Any
+			}
+		}
+
+		// Static 节点
+		if child = cn.findStaticChild(search[0]); child != nil {
+			// Save next
+			if cn.prefix[len(cn.prefix)-1] == '/' { // Issue #623
+				nk = pkind
+				nn = cn
+				ns = search
+			}
+			cn = child
+			continue
+		}
+
+	Param:
+		// Param 节点
+		if child = cn.paramChildren; child != nil {
+			// Issue #378
+			if len(pvalues) == n {
+				continue
+			}
+
+			// Save next
+			if cn.prefix[len(cn.prefix)-1] == '/' { // Issue #623
+				nk = akind
+				nn = cn
+				ns = search
+			}
+
+			cn = child
+			i, l := 0, len(search)
+			for ; i < l && search[i] != '/'; i++ {
+			}
+			pvalues[n] = search[:i]
+			n++
+			search = search[i:]
+			continue
+		}
+
+	Any:
+		// Any 节点
+		if cn = cn.anyChildren; cn != nil {
+			// If any node is found, use remaining path for pvalues
+			pvalues[len(cn.pnames)-1] = search
+			break
+		}
+
+		// No node found, continue at stored next node
+		// or find nearest "any" route
+		if nn != nil {
+			// No next node to go down in routing (issue #954)
+			// Find nearest "any" route going up the routing tree
+			search = ns
+			np := nn.parent
+			// Consider param route one level up only
+			if cn = nn.paramChildren; cn != nil {
+				pos := strings.IndexByte(ns, '/')
+				if pos == -1 {
+					// If no slash is remaining in search string set param value
+					if len(cn.pnames) > 0 {
+						pvalues[len(cn.pnames)-1] = search
+					}
+					break
+				} else if pos > 0 {
+					// Otherwise continue route processing with restored next node
+					cn = nn
+					nn = nil
+					ns = ""
+					goto Param
+				}
+			}
+			// No param route found, try to resolve nearest any route
+			for {
+				np = nn.parent
+				if cn = nn.anyChildren; cn != nil {
+					break
+				}
+				if np == nil {
+					break // no further parent nodes in tree, abort
+				}
+				var str strings.Builder
+				str.WriteString(nn.prefix)
+				str.WriteString(search)
+				search = str.String()
+				nn = np
+			}
+			if cn != nil { // use the found "any" route and update path
+				pvalues[len(cn.pnames)-1] = search
+				break
+			}
+		}
+		return // Not found
+
+	}
+
+	ctx.handler = cn.methodHandler.findHandler(method)
+	ctx.path = cn.ppath
+	ctx.pnames = cn.pnames
+
+	// NOTE: Slow zone...
+	if ctx.handler == nil {
+		ctx.handler = cn.checkMethodNotAllowed()
+
+		// Dig further for any, might have an empty value for *, e.g.
+		// serving a directory. Issue #207.
+		if cn = cn.anyChildren; cn == nil {
+			return
+		}
+		if h := cn.methodHandler.findHandler(method); h != nil {
+			ctx.handler = h
+		} else {
+			ctx.handler = cn.checkMethodNotAllowed()
+		}
+		ctx.path = cn.ppath
+		ctx.pnames = cn.pnames
+		pvalues[len(cn.pnames)-1] = ""
+	}
+
+	return
+}
 

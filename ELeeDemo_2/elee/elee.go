@@ -8,7 +8,7 @@ import (
 
 type Elee struct{
 	// 静态路由
-	routers map[string] *methodHandler
+	//routers map[string] *methodHandler
 	tree *node
 	maxParam *int
 }
@@ -16,18 +16,20 @@ type Elee struct{
 
 func New() *Elee{
 	elee := &Elee{
-		routers: make(map[string] *methodHandler),
+		maxParam:        new(int),
+
+		//routers: make(map[string] *methodHandler),
+		tree: &node{
+			// 节点对应的不同http metthod 的handler
+			methodHandler: new(methodHandler),
+		},
 	}
+	elee.tree.elee= elee
 	return elee
 }
 
 func (elee *Elee) addRouter(method, path string, handler HandlerFunc){
-	meth,ok := elee.routers[path]
-	if !ok{
-		meth = &methodHandler{}
-		elee.routers[path] = meth
-	}
-	meth.addHandler(method,handler)
+	elee.tree.Add(method,path,handler)
 }
 
 
@@ -73,16 +75,11 @@ func (elee *Elee) TRACE(path string, handler HandlerFunc){
 
 func (elee *Elee) ServeHTTP(w http.ResponseWriter, req *http.Request){
 	cnt := newContext(w,req)
-	meth,ok:= elee.routers[req.URL.Path]
-	if !ok{
+	elee.tree.Find(req.Method,req.URL.Path,cnt)
+	h := cnt.Handler()
+	if h == nil{
 		cnt.String(http.StatusNotFound,"error:%d\n",http.StatusNotFound)
 		return
 	}
-	handle := meth.findHandler(cnt.Method())
-	 if handle == nil{
-		 cnt.String(http.StatusNotFound,"error:%d\n",http.StatusNotFound)
-		 return
-	 }
-	 handle(cnt)
-
+	h(cnt)
 }

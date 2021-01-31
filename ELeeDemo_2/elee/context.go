@@ -36,6 +36,8 @@ type Context interface{
 
 	String(code int, format string,values ...interface{})
 
+	Handler()HandlerFunc
+
 
 }
 
@@ -45,8 +47,11 @@ type HandlerFunc func(c Context)error
 type context struct{
 	request *http.Request // http请求
 	response *Response // http请求响应，封装了http.ResponseWriter和状态码
+	pnames []string
+	pvalues []string
 	path string  // 请求路径
 	method string // 请求的方法
+	handler HandlerFunc
 }
 
 func newContext(w http.ResponseWriter,req *http.Request) Context {
@@ -58,6 +63,11 @@ func newContext(w http.ResponseWriter,req *http.Request) Context {
 	cnt.path = req.URL.Path
 	cnt.method = req.Method
 	return cnt
+}
+
+
+func (cnt *context) Handler() HandlerFunc{
+	return cnt.handler
 }
 
 
